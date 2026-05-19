@@ -1,0 +1,1927 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Wackers" />
+    <title>Wackers ⛳</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; background: #1C2331; overflow: hidden; }
+      #root { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    </style>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect } = React;
+
+const GOLF_API_KEY = "PKKKM6QRKV6ED2ZKNULS43NRG4";
+
+// ── THEME — black & white with green accent ──────────────────────────────────
+const T = {
+  teal:"#2D7A3A",     // forest green accent
+  tealDark:"#1F5C2A",
+  tealPale:"#E8F5E9",
+  gold:"#F9A825",
+  red:"#D32F2F",
+  blue:"#1565C0",
+  green:"#2D7A3A",
+  bg:"#F5F5F5",
+  white:"#FFFFFF",
+  border:"#E0E0E0",
+  text:"#111111",
+  sub:"#555555",
+  dim:"#999999",
+  // Dark UI
+  dark:"#1C2331",     // navy black for header/nav
+  darkCard:"#252D3D",
+  darkBorder:"rgba(255,255,255,0.1)",
+};
+const TC = { red:{bg:"#E53935",label:"Red"}, blue:{bg:"#1E88E5",label:"Blue"}, green:{bg:"#43A047",label:"Green"}, yellow:{bg:"#F9A825",label:"Gold"} };
+const DP = [5,4,5,4,3,5,3,4,4,3,4,5,4,4,5,3,4,4];
+const DS = [9,15,7,1,13,5,17,3,11,10,6,18,2,16,4,8,14,12];
+const DY = [520,385,470,390,175,510,145,395,410,155,375,490,365,355,490,160,380,405];
+const BUILTIN = [{id:"tewkesbury",name:"Tewkesbury Park",location:"Tewkesbury, Gloucestershire",pars:DP,sis:DS,yards:DY,lat:51.987,lon:-2.162}];
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+const uid  = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+const gcode= () => Math.random().toString(36).slice(2,8).toUpperCase();
+const tm   = t  => TC[t] || TC.red;
+const n    = v  => Number(v) || 0;
+
+function sf(score, par, hcp, si) {
+  if (!score || score <= 0) return 0;
+  const shots = Math.floor(hcp / 18) + (si <= (hcp % 18) ? 1 : 0);
+  return Math.max(0, par - (score - shots) + 2);
+}
+function totalSF(scores, hcp, pars, sis) {
+  return (scores || []).reduce((acc, v, i) => v > 0 ? acc + sf(v, pars[i], hcp, sis[i]) : acc, 0);
+}
+function yds(la1,lo1,la2,lo2) {
+  const R=6371000, dLa=(la2-la1)*Math.PI/180, dLo=(lo2-lo1)*Math.PI/180;
+  const a = Math.sin(dLa/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)**2;
+  return Math.round(2*R*Math.asin(Math.sqrt(a))*1.09361);
+}
+// Safe score getter
+function getScores(game, pid, day) {
+  if (!game || !game.scores) return Array(18).fill(0);
+  const byDay = game.scores[pid];
+  if (!byDay) return Array(18).fill(0);
+  const arr = byDay[day];
+  if (!arr || !Array.isArray(arr)) return Array(18).fill(0);
+  return [...arr];
+}
+
+// ── ATOMS ─────────────────────────────────────────────────────────────────────
+const Ico = ({d,sz=20,col="currentColor"}) => (
+  <svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d={d}/></svg>
+);
+
+function Av({name, team, size=38}) {
+  const ini = name.split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase();
+  return <div style={{width:size,height:size,borderRadius:"50%",background:tm(team).bg,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:size*0.34,flexShrink:0}}>{ini}</div>;
+}
+
+function Chip({pts}) {
+  const bg = pts>=4?"#1A237E":pts===3?"#1565C0":pts===2?"#42A5F5":pts===1?"#90CAF9":"#E0E6E3";
+  const col = pts>=3?"#fff":pts>=1?T.text:T.dim;
+  return <div style={{width:28,height:28,borderRadius:6,background:bg,color:col,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:12}}>{pts>0?pts:"—"}</div>;
+}
+// Score block — coloured by Stableford points earned
+function ScoreBlock({score, par, hcp, si}) {
+  if(!score||score<=0) return <div style={{width:28,height:28,borderRadius:6,background:"#EEEEEE",color:"#bbb",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>—</div>;
+  const pts = sf(score,par,hcp,si);
+  let bg="#EEEEEE", col="#999";
+  if(pts>=4){bg="#1A237E";col="#fff";}      // eagle or better (4+ pts)
+  else if(pts===3){bg="#1565C0";col="#fff";} // birdie (3 pts)
+  else if(pts===2){bg="#42A5F5";col="#fff";} // par (2 pts)
+  else if(pts===1){bg="#90CAF9";col="#333";} // bogey (1 pt)
+  // pts===0 stays grey — double bogey or worse = no score
+  return <div style={{width:28,height:28,borderRadius:6,background:bg,color:col,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:12}}>{score}</div>;
+}
+
+function Bar({title,sub,onBack,right}) {
+  return (
+    <div style={{background:T.dark,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+      {onBack && <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:0,display:"flex"}}><Ico d="M19 12H5M12 5l-7 7 7 7" sz={22} col="#fff"/></button>}
+      <div style={{flex:1}}>
+        <div style={{fontWeight:700,fontSize:17,color:"#fff"}}>{title}</div>
+        {sub && <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",marginTop:1}}>{sub}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function Crd({children, style={}}) {
+  return <div style={{background:T.white,borderRadius:14,padding:16,boxShadow:"0 1px 4px rgba(0,0,0,0.06)",border:`1px solid ${T.border}`,...style}}>{children}</div>;
+}
+
+function Btn({label,onClick,disabled,full,sm,outline,color}) {
+  const bg = disabled?"#E8E8E8":outline?"transparent":(color||T.teal);
+  const cl = disabled?T.dim:outline?(color||T.teal):"#fff";
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{background:bg,color:cl,border:outline?`2px solid ${color||T.teal}`:"none",borderRadius:10,
+        padding:sm?"8px 14px":"13px 18px",fontWeight:700,fontSize:sm?13:15,
+        cursor:disabled?"not-allowed":"pointer",width:full?"100%":"auto",opacity:disabled?0.6:1}}>
+      {label}
+    </button>
+  );
+}
+
+function Fld({children}) {
+  return <div style={{fontSize:11,fontWeight:600,color:T.sub,letterSpacing:0.5,marginBottom:5,marginTop:12}}>{children}</div>;
+}
+
+function Inp({label,value,onChange,placeholder,type="text"}) {
+  return (
+    <div>
+      {label && <Fld>{label}</Fld>}
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+        style={{width:"100%",padding:"11px 13px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}/>
+    </div>
+  );
+}
+
+// ── NAV ───────────────────────────────────────────────────────────────────────
+const TABS = [
+  {id:"courses", label:"Courses",   icon:"M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"},
+  {id:"setup",   label:"Setup",     icon:"M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"},
+  {id:"cards",   label:"Scorecard", icon:"M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"},
+  {id:"board",   label:"Scores",    icon:"M4 20h16M4 20V4M4 20l4-4M20 20V4M20 20l-4-4M12 20V10"},
+  {id:"history", label:"History",   icon:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"},
+];
+
+function Nav({tab, setTab}) {
+  return (
+    <div style={{flexShrink:0,background:T.dark,borderTop:"1px solid rgba(255,255,255,0.08)",display:"flex",boxShadow:"0 -2px 12px rgba(0,0,0,0.4)"}}>
+      {TABS.map(t => {
+        const active = tab === t.id;
+        return (
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{flex:1,padding:"9px 2px 11px",border:"none",background:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+            <Ico d={t.icon} sz={19} col={active?"#fff":"rgba(255,255,255,0.35)"}/>
+            <span style={{fontSize:8.5,fontWeight:active?700:400,color:active?"#fff":"rgba(255,255,255,0.35)",letterSpacing:0.2}}>{t.label}</span>
+            {active && <div style={{width:20,height:2,borderRadius:2,background:T.teal}}/>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COURSES TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function CoursesTab({course, setCourse, setTab}) {
+  const [nearby,  setNearby]  = useState([]);
+  const [query,   setQuery]   = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [locLoad, setLocLoad] = useState(false);
+  const [err,     setErr]     = useState("");
+  const [view,    setView]    = useState("home"); // home | search
+
+  // Load nearby courses on mount using GPS
+  useEffect(() => {
+    setLocLoad(true);
+    if (!navigator.geolocation) { setLocLoad(false); return; }
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        try {
+          const { latitude: lat, longitude: lon } = pos.coords;
+          const r = await fetch(`/api/search?lat=${lat}&lon=${lon}`);
+          if (!r.ok) throw new Error();
+          const data = await r.json();
+          setNearby(data.courses || []);
+        } catch {
+          setNearby(BUILTIN);
+        }
+        setLocLoad(false);
+      },
+      () => { setNearby(BUILTIN); setLocLoad(false); },
+      { timeout: 8000 }
+    );
+  }, []);
+
+  async function search() {
+    if (!query.trim()) return;
+    setLoading(true); setErr(""); setResults([]);
+    const bi = BUILTIN.filter(c => c.name.toLowerCase().includes(query.toLowerCase()));
+    try {
+      const r = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (!r.ok) throw new Error();
+      const data = await r.json();
+      setResults([...bi, ...(data.courses || [])]);
+      if (!bi.length && !(data.courses || []).length) setErr("No courses found");
+    } catch {
+      setResults(BUILTIN);
+      setErr("Showing built-in courses.");
+    }
+    setLoading(false);
+  }
+
+  async function pick(c) {
+    if (c.pars) { setCourse(c); setTab("map"); return; }
+    let full = c;
+    try {
+      const r = await fetch(`/api/search?id=${c.id}`);
+      if (r.ok) full = await r.json();
+    } catch {}
+    const course_data = full.course || full;
+    const tee   = course_data.tees?.male?.[0] || course_data.tees?.female?.[0] || {};
+    const holes = tee.holes || [];
+    setCourse({
+      id:       c.id,
+      name:     c.club_name || c.course_name || c.name,
+      location: [c.location?.city, c.location?.state_name, c.location?.country].filter(Boolean).join(", "),
+      pars:     holes.length === 18 ? holes.map(h => h.par      || 4) : DP,
+      sis:      holes.length === 18 ? holes.map(h => h.handicap || 0) : DS,
+      yards:    holes.length === 18 ? holes.map(h => h.yardage  || 0) : DY,
+      lat:      c.location?.latitude,
+      lon:      c.location?.longitude,
+      holeCoords: holes.map(h => ({
+        greenLat: h.green?.lat || null,
+        greenLon: h.green?.lon || null,
+        teeLat:   h.tee?.lat   || null,
+        teeLon:   h.tee?.lon   || null,
+      })),
+    });
+    setTab("map");
+  }
+
+  // Generate satellite thumbnail URL for a course
+  function thumbUrl(lat, lon) {
+    if (!lat || !lon) return null;
+    // Esri static map - free, no key needed
+    return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${lon-0.008},${lat-0.006},${lon+0.008},${lat+0.006}&bboxSR=4326&size=400,200&imageSR=4326&format=jpg&f=image`;
+  }
+
+  function CourseCard({c, onPick}) {
+    const name = c.name || c.club_name || c.course_name || "";
+    const loc  = c.location
+      ? [c.location.city, c.location.state_name, c.location.country].filter(Boolean).join(", ")
+      : (c.location_string || "");
+    const lat  = c.location?.latitude  || c.lat;
+    const lon  = c.location?.longitude || c.lon;
+    const par  = c.pars ? c.pars.reduce((a,b)=>a+b,0) : c.tees?.male?.[0]?.par_total;
+    const thumb = thumbUrl(lat, lon);
+    const active = course && (course.id === c.id || course.name === name);
+
+    return (
+      <div onClick={() => onPick(c)}
+        style={{background:T.white, borderRadius:14, overflow:"hidden",
+          border:`2px solid ${active ? T.teal : T.border}`,
+          boxShadow:"0 2px 8px rgba(0,0,0,0.07)", cursor:"pointer", marginBottom:12}}>
+        {/* Satellite thumbnail */}
+        <div style={{height:140, background:"#1a2c25", position:"relative", overflow:"hidden"}}>
+          {thumb
+            ? <img src={thumb} alt={name}
+                style={{width:"100%", height:"100%", objectFit:"cover"}}
+                onError={e => { e.target.style.display="none"; }}/>
+            : <div style={{width:"100%", height:"100%", display:"flex", alignItems:"center",
+                justifyContent:"center", fontSize:32}}>⛳</div>}
+          {active && (
+            <div style={{position:"absolute", top:10, right:10,
+              background:T.teal, color:"#fff", borderRadius:20,
+              padding:"3px 10px", fontSize:11, fontWeight:700}}>
+              ✓ Selected
+            </div>
+          )}
+          {par && (
+            <div style={{position:"absolute", bottom:10, left:10,
+              background:"rgba(0,0,0,0.7)", color:"#fff", borderRadius:20,
+              padding:"3px 10px", fontSize:11, fontWeight:700}}>
+              Par {par}
+            </div>
+          )}
+        </div>
+        <div style={{padding:"10px 14px 12px"}}>
+          <div style={{fontWeight:700, fontSize:15, color:T.text}}>{name}</div>
+          {loc && <div style={{fontSize:12, color:T.sub, marginTop:2}}>{loc}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  const list = view === "search" ? results : (nearby.length ? nearby : BUILTIN);
+
+  return (
+    <div style={{flex:1, display:"flex", flexDirection:"column", background:T.bg, overflow:"hidden"}}>
+      {/* Search bar */}
+      <div style={{padding:"12px 16px", background:T.white, borderBottom:`1px solid ${T.border}`, flexShrink:0}}>
+        <div style={{display:"flex", gap:8}}>
+          <div style={{flex:1, display:"flex", alignItems:"center", gap:8,
+            background:"#F0F4F3", borderRadius:12, padding:"10px 14px",
+            border:`1px solid ${T.border}`}}>
+            <Ico d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" sz={18} col={T.dim}/>
+            <input value={query}
+              onChange={e => { setQuery(e.target.value); if (!e.target.value) setView("home"); }}
+              onKeyDown={e => { if(e.key==="Enter"){ setView("search"); search(); } }}
+              placeholder="Search course name…"
+              style={{flex:1, background:"none", border:"none", fontSize:14,
+                color:T.text, outline:"none"}}/>
+            {query && (
+              <button onClick={() => { setQuery(""); setView("home"); }}
+                style={{background:"none", border:"none", color:T.dim,
+                  cursor:"pointer", fontSize:18, lineHeight:1, padding:0}}>×</button>
+            )}
+          </div>
+          <button onClick={() => { setView("search"); search(); }}
+            style={{background:T.teal, color:"#fff", border:"none", borderRadius:12,
+              padding:"10px 16px", fontWeight:700, fontSize:14, cursor:"pointer",
+              minWidth:72, display:"flex", alignItems:"center", justifyContent:"center"}}>
+            {loading
+              ? <div style={{width:16, height:16, border:"2px solid rgba(255,255,255,0.3)",
+                  borderTopColor:"#fff", borderRadius:"50%", animation:"spin 0.7s linear infinite"}}/>
+              : "Search"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{flex:1, overflowY:"auto", padding:"14px 16px 80px"}}>
+        {/* Section header */}
+        <div style={{fontSize:11, fontWeight:700, color:T.sub, letterSpacing:0.8, marginBottom:12}}>
+          {view === "search"
+            ? `${results.length} COURSES FOUND`
+            : locLoad ? "📍 FINDING NEARBY COURSES…" : "⛳ COURSES NEAR YOU"}
+        </div>
+
+        {err && (
+          <div style={{padding:"8px 12px", background:"#FFF8E1",
+            border:`1px solid ${T.gold}44`, borderRadius:8, fontSize:12,
+            color:"#6D4C00", marginBottom:12}}>{err}</div>
+        )}
+
+        {locLoad && (
+          <div style={{textAlign:"center", padding:32}}>
+            <div style={{width:28, height:28, border:`3px solid ${T.border}`,
+              borderTopColor:T.teal, borderRadius:"50%",
+              animation:"spin 0.8s linear infinite", margin:"0 auto 12px"}}/>
+            <div style={{fontSize:13, color:T.sub}}>Finding courses near you…</div>
+          </div>
+        )}
+
+        {!locLoad && list.map((c, i) => (
+          <CourseCard key={c.id || i} c={c} onPick={pick}/>
+        ))}
+
+        <div style={{fontSize:11, color:T.dim, textAlign:"center", paddingTop:4}}>
+          30,000+ courses · powered by GolfCourseAPI
+        </div>
+      </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COURSE MAP TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function MapTab({course}) {
+  const mapRef    = useRef(null);
+  const leafRef   = useRef(null);
+  const lineRef   = useRef(null);   // shot line player→pin
+  const pinMkr    = useRef(null);
+  const pMkr      = useRef(null);
+  const accCirc   = useRef(null);
+  const d100Ref   = useRef(null);   // 100y ring
+  const d150Ref   = useRef(null);   // 150y ring
+  const d200Ref   = useRef(null);   // 200y ring
+  const midLbl    = useRef(null);   // mid-line distance bubble
+  const watchRef  = useRef(null);
+
+  const [hole,    setHole]   = useState(0);
+  const [pos,     setPos]    = useState(null);
+  const [acc,     setAcc]    = useState(null);
+  const [gps,     setGps]    = useState(false);
+  const [gpsErr,  setGpsErr] = useState("");
+  const [leafOk,  setLeafOk] = useState(false);
+  // Per-hole pin positions
+  const [pins, setPins] = useState(() => Array(18).fill(null));
+
+  const ac     = course || BUILTIN[0];
+  const pars   = ac.pars  || DP;
+  const yards  = ac.yards || DY;
+  const sis    = ac.sis   || DS;
+  const pin    = pins[hole];
+  const dist   = pos && pin ? yds(pos.lat, pos.lon, pin.lat, pin.lon) : null;
+
+  function distCol(d) {
+    if (!d) return "#fff";
+    if (d < 100) return "#4CAF50";
+    if (d < 150) return "#8BC34A";
+    if (d < 200) return "#FFC107";
+    if (d < 250) return "#FF9800";
+    return "#F44336";
+  }
+
+  // ── Load Leaflet ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (window.L) { setLeafOk(true); return; }
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(css);
+    const js = document.createElement("script");
+    js.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    js.onload = () => setLeafOk(true);
+    document.head.appendChild(js);
+  }, []);
+
+  // ── Init map ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafOk || !mapRef.current || leafRef.current) return;
+    const L   = window.L;
+    const map = L.map(mapRef.current, { zoomControl: false, attributionControl: false });
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 21 }
+    ).addTo(map);
+    map.setView([ac.lat || 51.987, ac.lon || -2.162], 17);
+    leafRef.current = map;
+    return () => { map.remove(); leafRef.current = null; };
+  }, [leafOk]);
+
+  // ── Re-centre on course change ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafRef.current) return;
+    leafRef.current.setView([ac.lat || 51.987, ac.lon || -2.162], 17);
+    setPins(Array(18).fill(null));
+  }, [ac.id]);
+
+  // ── Map click → place/move pin ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafRef.current) return;
+    const L = window.L, map = leafRef.current;
+    function onClick(e) {
+      const { lat, lng } = e.latlng;
+      const newPin = { lat, lon: lng };
+      setPins(prev => { const n = [...prev]; n[hole] = newPin; return n; });
+    }
+    map.on("click", onClick);
+    return () => map.off("click", onClick);
+  }, [leafRef.current, hole]);
+
+  // ── Draw pin marker ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!leafRef.current) return;
+    const L = window.L, map = leafRef.current;
+    if (pinMkr.current) { map.removeLayer(pinMkr.current); pinMkr.current = null; }
+    if (!pin) return;
+    const icon = L.divIcon({
+      className: "",
+      iconAnchor: [14, 32],
+      html: `<div style="font-size:30px;filter:drop-shadow(0 2px 8px rgba(0,0,0,.8));line-height:1">⛳</div>`
+    });
+    pinMkr.current = L.marker([pin.lat, pin.lon], { icon, draggable: true }).addTo(map);
+    pinMkr.current.on("dragend", ev => {
+      const p = ev.target.getLatLng();
+      setPins(prev => { const n = [...prev]; n[hole] = { lat: p.lat, lon: p.lng }; return n; });
+    });
+  }, [pin, hole]);
+
+  // ── Draw player dot + accuracy circle ─────────────────────────────────────
+  useEffect(() => {
+    if (!leafRef.current) return;
+    const L = window.L, map = leafRef.current;
+    if (pMkr.current)   { map.removeLayer(pMkr.current);   pMkr.current   = null; }
+    if (accCirc.current){ map.removeLayer(accCirc.current); accCirc.current= null; }
+    if (!pos) return;
+    const icon = L.divIcon({
+      className: "",
+      iconAnchor: [13, 13],
+      html: `<div style="width:26px;height:26px;border-radius:50%;background:#2196F3;border:3px solid #fff;box-shadow:0 0 0 3px rgba(33,150,243,0.4),0 3px 10px rgba(0,0,0,.6)"></div>`
+    });
+    pMkr.current = L.marker([pos.lat, pos.lon], { icon }).addTo(map);
+    if (acc) accCirc.current = L.circle([pos.lat, pos.lon], {
+      radius: acc / 2, color: "#2196F3", fillColor: "#2196F3",
+      fillOpacity: 0.06, weight: 1
+    }).addTo(map);
+  }, [pos, acc]);
+
+  // ── Draw shot line + distance rings + mid label ────────────────────────────
+  useEffect(() => {
+    if (!leafRef.current) return;
+    const L = window.L, map = leafRef.current;
+    // Clean up old layers
+    [lineRef, d100Ref, d150Ref, d200Ref, midLbl].forEach(r => {
+      if (r.current) { map.removeLayer(r.current); r.current = null; }
+    });
+    if (!pos || !pin) return;
+
+    // Shot line — white, like 18birdies
+    lineRef.current = L.polyline(
+      [[pos.lat, pos.lon], [pin.lat, pin.lon]],
+      { color: "#ffffff", weight: 2.5, opacity: 0.9, dashArray: "6 4" }
+    ).addTo(map);
+
+    // Distance rings from pin (100, 150, 200 yards)
+    const mPerYard = 0.9144;
+    [
+      { ref: d100Ref, y: 100, col: "#4CAF50" },
+      { ref: d150Ref, y: 150, col: "#FFC107" },
+      { ref: d200Ref, y: 200, col: "#F44336" },
+    ].forEach(({ ref, y, col }) => {
+      ref.current = L.circle([pin.lat, pin.lon], {
+        radius: y * mPerYard,
+        color: col, fill: false,
+        weight: 1.5, opacity: 0.6,
+        dashArray: "4 6"
+      }).addTo(map);
+    });
+
+    // Mid-point distance bubble on the line
+    const midLat = (pos.lat + pin.lat) / 2;
+    const midLon = (pos.lon + pin.lon) / 2;
+    const d      = yds(pos.lat, pos.lon, pin.lat, pin.lon);
+    const bubbleIcon = L.divIcon({
+      className: "",
+      iconAnchor: [28, 14],
+      html: `<div style="background:rgba(0,0,0,0.75);color:${distCol(d)};padding:5px 10px;border-radius:20px;font-size:14px;font-weight:700;white-space:nowrap;border:1px solid rgba(255,255,255,0.2);box-shadow:0 2px 8px rgba(0,0,0,.5)">${d}y</div>`
+    });
+    midLbl.current = L.marker([midLat, midLon], { icon: bubbleIcon, interactive: false }).addTo(map);
+
+    // Fit map to show both player and pin with some padding
+    const bounds = L.latLngBounds([[pos.lat, pos.lon], [pin.lat, pin.lon]]);
+    map.fitBounds(bounds, { padding: [60, 60], maxZoom: 19 });
+
+  }, [pos, pin]);
+
+  // ── GPS ────────────────────────────────────────────────────────────────────
+  function startGPS() {
+    if (!navigator.geolocation) { setGpsErr("GPS not supported on this device"); return; }
+    setGps(true); setGpsErr("");
+    watchRef.current = navigator.geolocation.watchPosition(
+      p => {
+        const np = { lat: p.coords.latitude, lon: p.coords.longitude };
+        setPos(np);
+        setAcc(Math.round(p.coords.accuracy));
+      },
+      e => { setGpsErr(e.message); setGps(false); },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+    );
+  }
+  function stopGPS() {
+    if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current);
+    setGps(false);
+  }
+  useEffect(() => () => { if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current); }, []);
+
+  const par     = pars[hole];
+  const yardage = yards[hole];
+  const si      = sis[hole];
+
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:"#111"}}>
+
+      {/* ── TOP HUD — exactly like 18birdies ── */}
+      <div style={{background:"rgba(0,0,0,0.92)",padding:"10px 14px 8px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:0}}>
+          {/* Hole number — big */}
+          <div style={{marginRight:14}}>
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.45)",letterSpacing:1.5,fontWeight:700}}>HOLE</div>
+            <div style={{fontSize:44,fontWeight:800,color:"#fff",lineHeight:1}}>{hole+1}</div>
+          </div>
+          <div style={{width:1,height:48,background:"rgba(255,255,255,0.12)",marginRight:14}}/>
+          {/* Par / Yards / SI */}
+          <div style={{flex:1,display:"flex",gap:16}}>
+            {[{l:"PAR",v:par},{l:"YARDS",v:yardage},{l:"S.I.",v:si}].map((x,i)=>(
+              <div key={i}>
+                <div style={{fontSize:9,color:"rgba(255,255,255,0.45)",letterSpacing:1.2,fontWeight:700}}>{x.l}</div>
+                <div style={{fontSize:26,fontWeight:700,color:"#fff",lineHeight:1}}>{x.v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{width:1,height:48,background:"rgba(255,255,255,0.12)",marginRight:14}}/>
+          {/* Distance to pin — hero number */}
+          <div style={{textAlign:"right",minWidth:80}}>
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.45)",letterSpacing:1.5,fontWeight:700}}>TO PIN</div>
+            <div style={{fontSize:dist?46:32,fontWeight:900,color:dist?distCol(dist):"rgba(255,255,255,0.2)",lineHeight:1,transition:"color 0.4s"}}>
+              {dist || "—"}
+            </div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.4)",marginTop:1}}>
+              {dist ? "yards" : gps ? (pin?"tap pin to move":"tap green") : "start GPS"}
+            </div>
+          </div>
+        </div>
+
+        {/* GPS row */}
+        <div style={{display:"flex",gap:8,marginTop:8}}>
+          <button onClick={gps?stopGPS:startGPS}
+            style={{flex:1,padding:"8px 0",borderRadius:9,border:"none",fontWeight:700,fontSize:13,cursor:"pointer",
+              background:gps?"rgba(244,67,54,0.25)":"rgba(0,137,123,0.35)",
+              color:gps?"#F44336":"#4DB6AC"}}>
+            {gps ? "⏹ Stop GPS" : "📍 Start GPS"}
+          </button>
+          <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 12px",
+            background:"rgba(255,255,255,0.06)",borderRadius:9,border:"1px solid rgba(255,255,255,0.08)"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",transition:"all 0.3s",
+              background:gps?(pos?"#4CAF50":"#FFC107"):"#555",
+              boxShadow:gps&&pos?"0 0 0 3px rgba(76,175,80,0.3)":"none"}}/>
+            <span style={{color:"rgba(255,255,255,0.55)",fontSize:12,fontWeight:500}}>
+              {gps ? (pos ? `±${acc}m` : "Acquiring…") : "Off"}
+            </span>
+          </div>
+          {/* Re-centre */}
+          {pos && (
+            <button onClick={()=>leafRef.current?.setView([pos.lat,pos.lon],18)}
+              style={{padding:"8px 12px",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.08)",
+                borderRadius:9,color:"rgba(255,255,255,0.7)",fontSize:13,cursor:"pointer"}}>
+              📍
+            </button>
+          )}
+        </div>
+        {gpsErr && (
+          <div style={{marginTop:6,fontSize:11,color:"#F44336",padding:"5px 10px",background:"rgba(244,67,54,0.1)",borderRadius:7}}>
+            ⚠ {gpsErr}
+          </div>
+        )}
+      </div>
+
+      {/* ── SATELLITE MAP ── */}
+      <div style={{flex:1,position:"relative"}}>
+        <div ref={mapRef} style={{width:"100%",height:"100%"}}/>
+
+        {!leafOk && (
+          <div style={{position:"absolute",inset:0,background:"#111",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+            <div style={{width:28,height:28,border:"3px solid rgba(255,255,255,0.1)",borderTopColor:"#00897B",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+            <div style={{color:"rgba(255,255,255,0.4)",fontSize:13}}>Loading satellite map…</div>
+          </div>
+        )}
+
+        {/* "Tap to place pin" hint */}
+        {leafOk && !pin && (
+          <div style={{position:"absolute",top:12,left:"50%",transform:"translateX(-50%)",
+            background:"rgba(0,0,0,0.78)",color:"#fff",padding:"7px 16px",
+            borderRadius:22,fontSize:12,fontWeight:600,zIndex:10,
+            whiteSpace:"nowrap",pointerEvents:"none",
+            border:"1px solid rgba(255,255,255,0.15)"}}>
+            Tap the green to place the flag ⛳
+          </div>
+        )}
+
+        {/* Distance ring legend */}
+        {pin && (
+          <div style={{position:"absolute",bottom:12,left:12,display:"flex",flexDirection:"column",gap:4,zIndex:10}}>
+            {[{c:"#4CAF50",l:"100y"},{c:"#FFC107",l:"150y"},{c:"#F44336",l:"200y"}].map((x,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:5}}>
+                <div style={{width:14,height:2,background:x.c,borderRadius:1}}/>
+                <span style={{fontSize:10,color:"rgba(255,255,255,0.65)",fontWeight:600}}>{x.l}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── HOLE STRIP + PREV/NEXT ── */}
+      <div style={{flexShrink:0,background:"rgba(0,0,0,0.92)",padding:"8px 10px",borderTop:"1px solid rgba(255,255,255,0.08)"}}>
+        <div style={{display:"flex",gap:4,overflowX:"auto",paddingBottom:6}}>
+          {Array.from({length:18},(_,i)=>{
+            const active = hole===i;
+            const hasPin = !!pins[i];
+            return (
+              <button key={i} onClick={()=>{
+                setHole(i);
+                // If we have a pin for this hole and GPS, zoom to show both
+                if(leafRef.current && pins[i]) {
+                  if(pos) {
+                    const L=window.L;
+                    leafRef.current.fitBounds(L.latLngBounds([[pos.lat,pos.lon],[pins[i].lat,pins[i].lon]]),{padding:[60,60],maxZoom:19});
+                  } else {
+                    leafRef.current.setView([pins[i].lat,pins[i].lon],18);
+                  }
+                }
+              }}
+                style={{width:36,height:36,borderRadius:9,border:"none",fontWeight:700,fontSize:13,
+                  cursor:"pointer",flexShrink:0,position:"relative",
+                  background:active?"#00897B":hasPin?"rgba(76,175,80,0.2)":"rgba(255,255,255,0.08)",
+                  color:active?"#fff":hasPin?"#4CAF50":"rgba(255,255,255,0.45)"}}>
+                {i+1}
+                {hasPin && !active && (
+                  <div style={{position:"absolute",top:2,right:2,width:6,height:6,borderRadius:"50%",background:"#4CAF50"}}/>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setHole(h=>Math.max(0,h-1))} disabled={hole===0}
+            style={{flex:1,padding:"9px 0",background:"rgba(255,255,255,0.07)",border:"none",
+              borderRadius:9,color:hole>0?"rgba(255,255,255,0.75)":"rgba(255,255,255,0.2)",
+              fontSize:13,fontWeight:600,cursor:hole>0?"pointer":"not-allowed"}}>
+            ← Hole {hole}
+          </button>
+          <button onClick={()=>setHole(h=>Math.min(17,h+1))} disabled={hole===17}
+            style={{flex:1,padding:"9px 0",background:hole<17?"#00897B":"rgba(255,255,255,0.07)",
+              border:"none",borderRadius:9,
+              color:hole<17?"#fff":"rgba(255,255,255,0.2)",
+              fontSize:13,fontWeight:700,cursor:hole<17?"pointer":"not-allowed"}}>
+            Hole {hole+2} →
+          </button>
+        </div>
+      </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}.leaflet-container{font-family:inherit!important;}`}</style>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MATCH SETUP TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function SetupTab({game, setGame, course, setTab}) {
+  const [step,   setStep]  = useState(1);
+  const [gName,  setGName] = useState("");
+  const [gDate,  setGDate] = useState(new Date().toISOString().split("T")[0]); // stored as YYYY-MM-DD
+  const [gDays,  setGDays] = useState(1);
+  const [players,setPL]    = useState([]);
+  const [matches,setMT]    = useState([]);
+  const [comps,  setComps] = useState([]);
+  const [pForm,  setPF]    = useState({name:"",hcp:"",team:"red"});
+  const [mForm,  setMF]    = useState({name:"",day:1,A:[],B:[],C:[],tri:false});
+  const [cForm,  setCF]    = useState({type:"ntp",hole:1,day:1});
+  const [showJ,  setShowJ] = useState(false);
+  const [jCode,  setJCode] = useState("");
+  const [jErr,   setJErr]  = useState("");
+  const codeRef = useRef(gcode());
+  const TKEYS = ["red","blue","green","yellow"];
+
+  function addPlayer() {
+    if(!pForm.name.trim()||!pForm.hcp) return;
+    setPL(p=>[...p,{id:uid(),name:pForm.name.trim(),handicap:parseInt(pForm.hcp),team:pForm.team}]);
+    setPF(f=>({...f,name:"",hcp:""}));
+  }
+  function togglePInTeam(pid,key) {
+    setMF(f=>{
+      const taken=["A","B","C"].filter(k=>k!==key).flatMap(k=>f[k]);
+      if(taken.includes(pid)) return f;
+      const cur=f[key];
+      return {...f,[key]:cur.includes(pid)?cur.filter(x=>x!==pid):[...cur,pid]};
+    });
+  }
+  function addMatch() {
+    if(!mForm.A.length||!mForm.B.length) return;
+    const teams=[
+      {id:"A",color:"red",  players:mForm.A},
+      {id:"B",color:"blue", players:mForm.B},
+      ...(mForm.tri&&mForm.C.length?[{id:"C",color:"green",players:mForm.C}]:[]),
+    ];
+    // Always store day as a plain number
+    const dayNum = parseInt(String(mForm.day),10) || 1;
+    setMT(ms=>[...ms,{id:uid(),name:mForm.name||`Match ${ms.length+1}`,day:dayNum,teams}]);
+    setMF({name:"",day:1,A:[],B:[],C:[],tri:false});
+  }
+  function addComp() {
+    const holeNum = parseInt(String(cForm.hole),10)||1;
+    const dayNum  = parseInt(String(cForm.day),10)||1;
+    if(comps.find(c=>c.type===cForm.type&&c.hole===holeNum&&c.day===dayNum)) return;
+    setComps(cs=>[...cs,{id:uid(),type:cForm.type,hole:holeNum,day:dayNum}]);
+  }
+  function launch() {
+    const g = {
+      id:uid(), code:codeRef.current,
+      name:gName||"Society Day",
+      date:gDate,
+      days:gDays,  // always a plain number (1 or 2)
+      course:course||BUILTIN[0],
+      players,
+      matches,
+      competitions:comps,
+      bonuses:[],
+      scores:{},
+      createdAt:new Date().toISOString(),
+    };
+    setGame(g);
+    setTab("cards");
+  }
+  function handleJoin() {
+    const c=jCode.trim().toUpperCase();
+    if(c.length<4){setJErr("Enter a valid code");return;}
+    if(game?.code===c)return;
+    setJErr("Code not found. Live join works once Wackers is hosted.");
+  }
+
+  // ── ACTIVE GAME VIEW ──────────────────────────────────────────────────────
+  if(game) {
+    return (
+      <div style={{flex:1,overflowY:"auto",background:T.bg,paddingBottom:80}}>
+        <div style={{padding:"12px 16px 0"}}>
+          <Crd>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:18,color:T.text}}>{game.name}</div>
+                <div style={{fontSize:12,color:T.sub,marginTop:3}}>{game.course?.name} · {game.date.split('-').reverse().join('/')}</div>
+                <div style={{fontSize:12,color:T.sub}}>{game.players.length} players · {game.matches.length} matches · {game.days} day{game.days>1?"s":""}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:10,color:T.sub,marginBottom:2}}>JOIN CODE</div>
+                <div style={{fontSize:26,fontWeight:700,color:T.teal,letterSpacing:3}}>{game.code}</div>
+              </div>
+            </div>
+            <div style={{marginTop:12}}><Btn label="End Game" onClick={()=>setGame(null)} sm outline/></div>
+          </Crd>
+
+          <div style={{fontSize:11,fontWeight:600,color:T.sub,letterSpacing:0.5,padding:"14px 0 8px"}}>PLAYERS ({game.players.length})</div>
+          <Crd style={{padding:0,overflow:"hidden"}}>
+            {game.players.map((p,i)=>(
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                <Av name={p.name} team={p.team} size={34}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:14,color:T.text}}>{p.name}</div>
+                  <div style={{fontSize:11,color:T.sub}}>Hcp {p.handicap} · {tm(p.team).label}</div>
+                </div>
+                <div style={{width:10,height:10,borderRadius:"50%",background:tm(p.team).bg}}/>
+              </div>
+            ))}
+          </Crd>
+
+          <div style={{fontSize:11,fontWeight:600,color:T.sub,letterSpacing:0.5,padding:"14px 0 8px"}}>MATCHES ({game.matches.length})</div>
+          {game.matches.map(m=>(
+            <Crd key={m.id} style={{marginBottom:10}}>
+              <div style={{fontWeight:700,fontSize:15,color:T.text,marginBottom:8}}>
+                {m.name}
+                {game.days>1&&<span style={{fontSize:11,color:T.sub,fontWeight:400}}> · Day {m.day}</span>}
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {m.teams.map(t=>(
+                  <div key={t.id} style={{background:tm(t.color).bg+"18",border:`1px solid ${tm(t.color).bg}44`,borderRadius:10,padding:"6px 10px"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:tm(t.color).bg,letterSpacing:0.5,marginBottom:3}}>{TC[t.color]?.label} Team</div>
+                    {t.players.map(pid=>{const pl=game.players.find(p=>p.id===pid);return pl?<div key={pid} style={{fontSize:13,color:T.text,fontWeight:600}}>{pl.name}</div>:null;})}
+                  </div>
+                ))}
+              </div>
+            </Crd>
+          ))}
+
+          {(game.competitions||[]).length>0&&(
+            <>
+              <div style={{fontSize:11,fontWeight:600,color:T.sub,letterSpacing:0.5,padding:"6px 0 8px"}}>COMPETITIONS</div>
+              {game.competitions.map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:T.white,borderRadius:10,marginBottom:6,border:`1px solid ${T.border}`}}>
+                  <span style={{fontSize:18}}>{c.type==="ntp"?"📍":"💥"}</span>
+                  <span style={{fontSize:13,color:T.text,fontWeight:600}}>{c.type==="ntp"?"Nearest the Pin":"Longest Drive"} — Hole {c.hole}{game.days>1?` (Day ${c.day})`:""}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── CREATE FLOW ───────────────────────────────────────────────────────────
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:T.bg,overflow:"hidden"}}>
+      {/* Step tabs */}
+      <div style={{display:"flex",background:T.white,borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+        {["Details","Players","Matches","Comps"].map((s,i)=>(
+          <div key={i} onClick={()=>setStep(i+1)}
+            style={{flex:1,padding:"10px 4px",textAlign:"center",cursor:"pointer",
+              borderBottom:step===i+1?`2px solid ${T.teal}`:"2px solid transparent",
+              color:step===i+1?T.teal:T.dim,fontWeight:step===i+1?700:500,fontSize:11,whiteSpace:"nowrap"}}>
+            {i+1}. {s}
+          </div>
+        ))}
+      </div>
+
+      <div style={{flex:1,overflowY:"auto",padding:"0 16px 80px"}}>
+        {/* Join banner */}
+        <Crd style={{marginTop:12,padding:"11px 14px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:13,color:T.sub}}>Got a code to join?</div>
+            <button onClick={()=>setShowJ(v=>!v)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 12px",fontSize:12,color:T.teal,cursor:"pointer",fontWeight:600}}>Enter Code →</button>
+          </div>
+          {showJ&&(
+            <div style={{marginTop:10,display:"flex",gap:8}}>
+              <input value={jCode} onChange={e=>{setJCode(e.target.value.toUpperCase());setJErr("");}} placeholder="e.g. WACK42" maxLength={8}
+                style={{flex:1,padding:"10px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:18,color:T.text,fontWeight:700,letterSpacing:4,textAlign:"center"}}/>
+              <Btn label="Join" onClick={handleJoin} sm/>
+            </div>
+          )}
+          {jErr&&<div style={{color:T.red,fontSize:12,marginTop:6}}>{jErr}</div>}
+        </Crd>
+
+        {/* STEP 1 */}
+        {step===1&&(
+          <div>
+            <Crd style={{marginTop:12,textAlign:"center"}}>
+              <div style={{fontSize:10,fontWeight:600,color:T.sub,letterSpacing:0.5,marginBottom:4}}>GAME CODE</div>
+              <div style={{fontSize:40,fontWeight:700,color:T.teal,letterSpacing:6}}>{codeRef.current}</div>
+              <div style={{fontSize:11,color:T.dim,marginTop:2}}>Share with your group to join</div>
+            </Crd>
+            <Inp label="Game Name" value={gName} onChange={setGName} placeholder="e.g. The Masters 2026"/>
+            <Inp label="Date" type="date" value={gDate} onChange={setGDate}/>
+            <Fld>Number of Days</Fld>
+            <div style={{display:"flex",gap:8}}>
+              {[1,2].map(d=>(
+                <button key={d} onClick={()=>setGDays(d)}
+                  style={{flex:1,padding:"11px 0",border:`1px solid ${gDays===d?T.teal:T.border}`,borderRadius:10,background:gDays===d?T.teal:T.white,color:gDays===d?"#fff":T.sub,fontWeight:700,fontSize:14,cursor:"pointer"}}>
+                  {d} Day{d>1?"s":""}
+                </button>
+              ))}
+            </div>
+            <div style={{marginTop:10,padding:"10px 12px",background:T.tealPale,borderRadius:10,fontSize:12,color:T.tealDark}}>
+              ⛳ Course: {course?.name||"Tewkesbury Park (default)"}
+            </div>
+            <div style={{marginTop:14}}><Btn label="Next: Add Players →" onClick={()=>setStep(2)} full disabled={!gName.trim()}/></div>
+          </div>
+        )}
+
+        {/* STEP 2 */}
+        {step===2&&(
+          <div>
+            <Crd style={{marginTop:12}}>
+              <div style={{fontWeight:700,fontSize:14,color:T.text,marginBottom:10}}>Add Player</div>
+              <Inp value={pForm.name} onChange={v=>setPF(f=>({...f,name:v}))} placeholder="Full name"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Inp value={pForm.hcp} onChange={v=>setPF(f=>({...f,hcp:v}))} placeholder="Handicap" type="number"/>
+                <div>
+                  <Fld>Team</Fld>
+                  <select value={pForm.team} onChange={e=>setPF(f=>({...f,team:e.target.value}))}
+                    style={{width:"100%",padding:"11px 10px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text}}>
+                    {TKEYS.map(t=><option key={t} value={t}>{TC[t].label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{marginTop:10}}><Btn label="+ Add Player" onClick={addPlayer} full/></div>
+            </Crd>
+            {players.length>0&&(
+              <Crd style={{marginTop:10,padding:0,overflow:"hidden"}}>
+                {players.map((p,i)=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                    <Av name={p.name} team={p.team} size={32}/>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:14,color:T.text}}>{p.name}</div>
+                      <div style={{fontSize:11,color:T.sub}}>Hcp {p.handicap} · {TC[p.team].label}</div>
+                    </div>
+                    <button onClick={()=>setPL(ps=>ps.filter(x=>x.id!==p.id))} style={{background:"none",border:"none",color:T.dim,cursor:"pointer",fontSize:20}}>×</button>
+                  </div>
+                ))}
+              </Crd>
+            )}
+            <div style={{marginTop:14}}><Btn label="Next: Set Up Matches →" onClick={()=>setStep(3)} full disabled={players.length<2}/></div>
+          </div>
+        )}
+
+        {/* STEP 3 */}
+        {step===3&&(
+          <div>
+            {matches.map(m=>(
+              <Crd key={m.id} style={{marginTop:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontWeight:700,fontSize:15,color:T.text}}>
+                    {m.name}{gDays>1&&<span style={{fontSize:11,color:T.sub}}> · Day {m.day}</span>}
+                  </div>
+                  <button onClick={()=>setMT(ms=>ms.filter(x=>x.id!==m.id))} style={{background:"none",border:"none",color:T.dim,cursor:"pointer",fontSize:20}}>×</button>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {m.teams.map(t=>(
+                    <div key={t.id} style={{background:tm(t.color).bg+"18",border:`1px solid ${tm(t.color).bg}44`,borderRadius:10,padding:"6px 10px"}}>
+                      <div style={{fontSize:9,fontWeight:700,color:tm(t.color).bg,marginBottom:3}}>{TC[t.color]?.label}</div>
+                      {t.players.map(pid=>{const pl=players.find(p=>p.id===pid);return pl?<div key={pid} style={{fontSize:12,color:T.text,fontWeight:600}}>{pl.name.split(" ")[0]}</div>:null;})}
+                    </div>
+                  ))}
+                </div>
+              </Crd>
+            ))}
+            <Crd style={{marginTop:10}}>
+              <div style={{fontWeight:700,fontSize:14,color:T.text,marginBottom:10}}>New Match</div>
+              <div style={{display:"grid",gridTemplateColumns:gDays>1?"1fr 80px":"1fr",gap:8}}>
+                <Inp value={mForm.name} onChange={v=>setMF(f=>({...f,name:v}))} placeholder={`Match ${matches.length+1}`}/>
+                {gDays>1&&(
+                  <div>
+                    <Fld>Day</Fld>
+                    <select value={mForm.day} onChange={e=>setMF(f=>({...f,day:parseInt(e.target.value,10)}))}
+                      style={{width:"100%",padding:"11px 8px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text}}>
+                      {Array.from({length:gDays},(_,i)=><option key={i+1} value={i+1}>Day {i+1}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <button onClick={()=>setMF(f=>({...f,tri:!f.tri}))}
+                style={{marginTop:8,padding:"5px 12px",border:`1px solid ${mForm.tri?T.teal:T.border}`,borderRadius:16,background:mForm.tri?T.tealPale:"transparent",color:mForm.tri?T.teal:T.sub,fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                {mForm.tri?"3 Teams ✓":"2 Teams"} — tap to switch
+              </button>
+              {["A","B",...(mForm.tri?["C"]:[])].map((key,ti)=>{
+                const labels=["Red Team","Blue Team","Green Team"],colors=["red","blue","green"];
+                const taken=["A","B","C"].filter(k=>k!==key).flatMap(k=>mForm[k]);
+                return (
+                  <div key={key} style={{marginTop:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6}}>
+                      <div style={{width:8,height:8,borderRadius:"50%",background:tm(colors[ti]).bg}}/>
+                      <span style={{fontSize:11,fontWeight:600,color:T.sub}}>{labels[ti]}</span>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {players.filter(p=>!taken.includes(p.id)).map(p=>{
+                        const sel=mForm[key].includes(p.id);
+                        return (
+                          <button key={p.id} onClick={()=>togglePInTeam(p.id,key)}
+                            style={{padding:"6px 12px",border:`1px solid ${sel?tm(colors[ti]).bg:T.border}`,borderRadius:20,background:sel?tm(colors[ti]).bg+"22":"transparent",color:sel?T.text:T.sub,fontSize:13,fontWeight:sel?700:400,cursor:"pointer"}}>
+                            {p.name.split(" ")[0]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{marginTop:12}}><Btn label="+ Add Match" onClick={addMatch} full disabled={!mForm.A.length||!mForm.B.length}/></div>
+            </Crd>
+            <div style={{marginTop:14}}>
+              {matches.length===0 && (mForm.A.length===0||mForm.B.length===0) && (
+                <div style={{padding:"10px 12px",background:"#FFF3E0",border:"1px solid #FFB74D",borderRadius:10,fontSize:13,color:"#E65100",marginBottom:10,textAlign:"center"}}>
+                  ⚠️ Add at least one match before continuing
+                </div>
+              )}
+              <Btn label="Next: Add Competitions →" onClick={()=>{
+                // Auto-save current match if teams are selected
+                if(mForm.A.length>0&&mForm.B.length>0) addMatch();
+                setStep(4);
+              }} full disabled={matches.length===0&&mForm.A.length===0}/>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4 — COMPETITIONS */}
+        {step===4&&(
+          <div>
+            <Crd style={{marginTop:12}}>
+              <div style={{fontWeight:700,fontSize:15,color:T.text,marginBottom:4}}>Competitions</div>
+              <div style={{fontSize:13,color:T.sub,marginBottom:12}}>
+                Set which holes have Nearest the Pin or Longest Drive. Badges appear on every player's scorecard.
+              </div>
+              {comps.map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:c.type==="ntp"?"#E3F2FD":"#FFF9E6",borderRadius:8,marginBottom:6,border:`1px solid ${c.type==="ntp"?"#90CAF9":"#FFE082"}`}}>
+                  <span style={{fontSize:16}}>{c.type==="ntp"?"📍":"💥"}</span>
+                  <span style={{fontWeight:700,fontSize:13,color:T.text,flex:1}}>{c.type==="ntp"?"Nearest the Pin":"Longest Drive"} — Hole {c.hole}{gDays>1?` (Day ${c.day})`:""}</span>
+                  <button onClick={()=>setComps(cs=>cs.filter(x=>x.id!==c.id))} style={{background:"none",border:"none",color:T.dim,cursor:"pointer",fontSize:18,lineHeight:1}}>×</button>
+                </div>
+              ))}
+              <Fld>Type</Fld>
+              <div style={{display:"flex",gap:8,marginBottom:4}}>
+                {[{v:"ntp",l:"📍 Nearest Pin"},{v:"ld",l:"💥 Longest Drive"}].map(opt=>(
+                  <button key={opt.v} onClick={()=>setCF(f=>({...f,type:opt.v}))}
+                    style={{flex:1,padding:"9px 8px",border:`1px solid ${cForm.type===opt.v?T.teal:T.border}`,borderRadius:10,background:cForm.type===opt.v?T.tealPale:"transparent",color:cForm.type===opt.v?T.teal:T.sub,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+                    {opt.l}
+                  </button>
+                ))}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:gDays>1?"1fr 1fr":"1fr",gap:8,marginBottom:12}}>
+                <div>
+                  <Fld>Hole</Fld>
+                  <select value={cForm.hole} onChange={e=>setCF(f=>({...f,hole:parseInt(e.target.value,10)}))}
+                    style={{width:"100%",padding:"10px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}>
+                    {Array.from({length:18},(_,i)=><option key={i+1} value={i+1}>Hole {i+1} — Par {(course?.pars||DP)[i]}</option>)}
+                  </select>
+                </div>
+                {gDays>1&&(
+                  <div>
+                    <Fld>Day</Fld>
+                    <select value={cForm.day} onChange={e=>setCF(f=>({...f,day:parseInt(e.target.value,10)}))}
+                      style={{width:"100%",padding:"10px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}>
+                      {Array.from({length:gDays},(_,i)=><option key={i+1} value={i+1}>Day {i+1}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <Btn label="+ Add Competition" onClick={addComp} full/>
+            </Crd>
+            <div style={{marginTop:14}}><Btn label="🏌️  Launch Game" onClick={launch} full color={T.teal}/></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCORECARD TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function ScorecardTab({game, setGame}) {
+  const [openId,    setOpenId]    = useState(null);
+  const [openMatch, setOpenMatch] = useState(null);
+  const [day,       setDay]       = useState(1);
+  const [groupHole, setGroupHole] = useState(0);
+
+  if(!game) {
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:T.bg,gap:12,padding:24,textAlign:"center"}}>
+        <div style={{fontSize:48}}>⛳</div>
+        <div style={{fontWeight:700,fontSize:18,color:T.text}}>No game set up yet</div>
+        <div style={{fontSize:13,color:T.sub}}>Go to Match Setup to create a game first</div>
+      </div>
+    );
+  }
+
+  const pars  = game.course?.pars  || DP;
+  const sis   = game.course?.sis   || DS;
+  const yards = game.course?.yards || DY;
+  const comps = game.competitions  || [];
+
+  // Get competitions on a specific hole for a specific day
+  function compsOn(holeIdx, d) {
+    return comps.filter(c => {
+      const holeMatch = parseInt(String(c.hole),10) === holeIdx+1;
+      const dayMatch  = game.days <= 1 || parseInt(String(c.day),10) === d;
+      return holeMatch && dayMatch;
+    });
+  }
+
+  function updateScore(pid, holeIdx, val) {
+    setGame(g => {
+      const scores = JSON.parse(JSON.stringify(g.scores||{}));
+      if(!scores[pid]) scores[pid] = {};
+      if(!scores[pid][day] || !Array.isArray(scores[pid][day])) scores[pid][day] = Array(18).fill(0);
+      scores[pid][day][holeIdx] = Math.max(0, parseInt(String(val),10)||0);
+      return {...g, scores};
+    });
+  }
+
+  // Always show ALL matches — grouped by day when multi-day game
+  // No filtering that could cause empty screens
+  const allMatches = game.matches || [];
+
+  // ── GROUP VIEW ─────────────────────────────────────────────────────────────
+  if(openMatch) {
+    const match = (game.matches||[]).find(m=>m.id===openMatch);
+    if(!match) { setOpenMatch(null); return null; }
+
+    const allPids      = match.teams.flatMap(t=>t.players);
+    const matchPlayers = allPids.map(pid=>{
+      const pl = game.players.find(p=>p.id===pid);
+      const teamColor = match.teams.find(t=>t.players.includes(pid))?.color;
+      return pl ? {...pl, teamColor} : null;
+    }).filter(Boolean);
+
+    const par     = pars[groupHole];
+    const yardage = yards[groupHole];
+    const si      = sis[groupHole];
+    const holeComps = compsOn(groupHole, day);
+
+    const dayBtns = game.days > 1 ? (
+      <div style={{display:"flex",gap:5}}>
+        {Array.from({length:game.days},(_,i)=>(
+          <button key={i+1} onClick={()=>setDay(i+1)}
+            style={{background:day===i+1?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.1)",border:`1px solid ${day===i+1?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.3)"}`,color:"#fff",borderRadius:16,padding:"3px 10px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+            D{i+1}
+          </button>
+        ))}
+      </div>
+    ) : null;
+
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",background:T.bg,overflow:"hidden"}}>
+        <Bar title={match.name} sub="Group Scorecard" onBack={()=>setOpenMatch(null)} right={dayBtns}/>
+
+        {/* Hole strip */}
+        <div style={{background:T.tealDark,padding:"8px 12px",overflowX:"auto",flexShrink:0}}>
+          <div style={{display:"flex",gap:4,minWidth:"max-content"}}>
+            {Array.from({length:18},(_,i)=>{
+              const hc = compsOn(i,day);
+              const allDone = matchPlayers.every(p=>(getScores(game,p.id,day)[i]||0)>0);
+              return (
+                <button key={i} onClick={()=>setGroupHole(i)}
+                  style={{width:32,height:32,borderRadius:7,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",flexShrink:0,position:"relative",
+                    background:groupHole===i?T.gold:allDone?"rgba(76,175,80,0.35)":"rgba(255,255,255,0.12)",
+                    color:groupHole===i?"#fff":"rgba(255,255,255,0.8)"}}>
+                  {i+1}
+                  {hc.length>0&&<div style={{position:"absolute",top:1,right:1,width:6,height:6,borderRadius:"50%",background:hc[0].type==="ntp"?"#29B6F6":"#FFA726"}}/>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Hole info bar */}
+        <div style={{background:T.teal,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div style={{display:"flex",gap:16}}>
+            {[{l:"HOLE",v:groupHole+1},{l:"PAR",v:par},{l:"YARDS",v:yardage},{l:"SI",v:si}].map((x,i)=>(
+              <div key={i} style={{textAlign:"center"}}>
+                <div style={{fontSize:9,color:"rgba(255,255,255,0.7)",letterSpacing:1}}>{x.l}</div>
+                <div style={{fontSize:22,fontWeight:700,color:"#fff",lineHeight:1}}>{x.v}</div>
+              </div>
+            ))}
+          </div>
+          {holeComps.length>0&&(
+            <div style={{display:"flex",gap:6}}>
+              {holeComps.map(c=>(
+                <div key={c.id} style={{background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 10px",fontSize:12,fontWeight:700,color:"#fff",display:"flex",alignItems:"center",gap:4}}>
+                  {c.type==="ntp"?"📍 NTP":"💥 LD"}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Player score entry */}
+        <div style={{flex:1,overflowY:"auto",padding:"12px 16px",paddingBottom:90}}>
+          {matchPlayers.map(player=>{
+            const allScores = getScores(game, player.id, day);
+            const sc        = allScores[groupHole] || 0;
+            const pts       = sc>0 ? sf(sc, par, player.handicap, si) : 0;
+            const totalPts  = totalSF(allScores, player.handicap, pars, sis);
+            const played    = allScores.filter(s=>s>0).length;
+            const shots     = Math.floor(player.handicap/18)+(si<=(player.handicap%18)?1:0);
+
+            return (
+              <Crd key={player.id} style={{marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                  <Av name={player.name} team={player.teamColor||player.team} size={40}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:15,color:T.text}}>{player.name}</div>
+                    <div style={{fontSize:11,color:T.sub}}>
+                      Hcp {player.handicap}{shots>0?` · +${shots} shot${shots>1?"s":""} this hole`:""} · {totalPts} pts ({played} holes)
+                    </div>
+                  </div>
+                  {pts>0&&(
+                    <div style={{textAlign:"center"}}>
+                      <Chip pts={pts}/>
+                      <div style={{fontSize:9,color:T.sub,marginTop:2}}>pts</div>
+                    </div>
+                  )}
+                </div>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <button onClick={()=>updateScore(player.id, groupHole, Math.max(0,sc-1))}
+                    style={{width:44,height:44,borderRadius:10,border:`1px solid ${T.border}`,background:"#F8FAFA",fontSize:22,color:T.teal,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                  <div style={{flex:1,textAlign:"center"}}>
+                    <input type="number" min="0" max="15" value={sc||""} onChange={e=>updateScore(player.id,groupHole,e.target.value)}
+                      style={{width:"100%",padding:"10px 0",textAlign:"center",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:28,fontWeight:700,color:sc?T.text:T.dim}}
+                      placeholder={String(par)}/>
+                    <div style={{fontSize:10,color:T.sub,marginTop:3}}>
+                      {sc>0?(sc===par?"Level par":sc<par?`${par-sc} under par`:`${sc-par} over par`):"Enter score"}
+                    </div>
+                  </div>
+                  <button onClick={()=>updateScore(player.id, groupHole, sc+1)}
+                    style={{width:44,height:44,borderRadius:10,border:`1px solid ${T.border}`,background:"#F8FAFA",fontSize:22,color:T.teal,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                </div>
+              </Crd>
+            );
+          })}
+        </div>
+
+        {/* Prev / Next */}
+        <div style={{flexShrink:0,background:T.white,borderTop:`1px solid ${T.border}`,padding:"10px 16px",display:"flex",gap:10}}>
+          <button onClick={()=>setGroupHole(h=>Math.max(0,h-1))} disabled={groupHole===0}
+            style={{flex:1,padding:"12px 0",border:`1px solid ${T.border}`,borderRadius:10,background:"#F8FAFA",fontWeight:700,fontSize:14,cursor:groupHole>0?"pointer":"not-allowed",color:groupHole>0?T.text:T.dim}}>
+            ← Hole {groupHole}
+          </button>
+          <button onClick={()=>setGroupHole(h=>Math.min(17,h+1))} disabled={groupHole===17}
+            style={{flex:1,padding:"12px 0",border:"none",borderRadius:10,background:groupHole<17?T.teal:"#E0E6E3",fontWeight:700,fontSize:14,cursor:groupHole<17?"pointer":"not-allowed",color:groupHole<17?"#fff":T.dim}}>
+            Hole {groupHole+2} →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── INDIVIDUAL SCORECARD ───────────────────────────────────────────────────
+  if(openId) {
+    const player = game.players.find(p=>p.id===openId);
+    if(!player) { setOpenId(null); return null; }
+
+    const hs       = getScores(game, player.id, day);
+    const totalPts = totalSF(hs, player.handicap, pars, sis);
+    const gross    = hs.reduce((a,b)=>a+b,0);
+    const totalPar = pars.reduce((a,b)=>a+b,0);
+
+    const dayBtns = game.days>1 ? (
+      <div style={{display:"flex",gap:5}}>
+        {Array.from({length:game.days},(_,i)=>(
+          <button key={i+1} onClick={()=>setDay(i+1)}
+            style={{background:day===i+1?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.1)",border:`1px solid ${day===i+1?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.3)"}`,color:"#fff",borderRadius:16,padding:"3px 10px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+            D{i+1}
+          </button>
+        ))}
+      </div>
+    ) : null;
+
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",background:T.bg,overflow:"hidden"}}>
+        <Bar title={player.name} sub={`Handicap ${player.handicap} · ${game.course?.name||""}`} onBack={()=>setOpenId(null)} right={dayBtns}/>
+        <div style={{flex:1,overflowY:"auto"}}>
+          <div style={{margin:"12px 16px"}}>
+            <Crd>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <Av name={player.name} team={player.team} size={48}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:17,color:T.text}}>{player.name}</div>
+                  <div style={{fontSize:12,color:T.sub}}>Handicap {player.handicap}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:34,fontWeight:700,color:T.teal,lineHeight:1}}>{totalPts}</div>
+                  <div style={{fontSize:11,color:T.sub}}>Stableford</div>
+                </div>
+              </div>
+            </Crd>
+          </div>
+
+          {[0,9].map(off=>{
+            const label  = off===0?"FRONT NINE":"BACK NINE";
+            const outLabel = off===0?"Out":"In";
+            const slice  = hs.slice(off,off+9);
+            const hGross = slice.reduce((a,b)=>a+b,0);
+            const hPar   = pars.slice(off,off+9).reduce((a,b)=>a+b,0);
+            const hPts   = slice.reduce((s,sc,i)=>sc>0?s+sf(sc,pars[off+i],player.handicap,sis[off+i]):s,0);
+            return (
+              <div key={off} style={{margin:"0 16px 12px",background:T.white,borderRadius:14,overflow:"hidden",border:`1px solid ${T.border}`,boxShadow:"0 1px 4px rgba(0,0,0,0.05)"}}>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:320}}>
+                    <thead>
+                      {/* Teal hole header row — matches screenshot */}
+                      <tr style={{background:T.teal}}>
+                        <td style={{padding:"6px 8px",color:"#fff",fontWeight:700,fontSize:11,letterSpacing:0.5,whiteSpace:"nowrap"}}>Hole</td>
+                        {Array.from({length:9},(_,i)=>i+off+1).map(h=>{
+                          const hc = compsOn(h-1,day);
+                          return (
+                            <td key={h} style={{textAlign:"center",padding:"6px 3px",fontWeight:700,color:"#fff",fontSize:12,position:"relative"}}>
+                              <span style={{position:"relative"}}>
+                                {h}
+                                {hc.length>0&&<span style={{position:"absolute",top:-4,right:-5,fontSize:7}}>{hc[0].type==="ntp"?"📍":"💥"}</span>}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td style={{textAlign:"center",padding:"6px 6px",fontWeight:800,color:"#fff",fontSize:12}}>{outLabel}</td>
+                      </tr>
+                      <tr style={{background:"#FAFAFA"}}>
+                        <td style={{padding:"4px 8px",color:T.sub,fontSize:10}}>Hcp</td>
+                        {sis.slice(off,off+9).map((s,i)=><td key={i} style={{textAlign:"center",color:T.sub,fontSize:10,padding:"4px 2px"}}>{s}</td>)}
+                        <td/>
+                      </tr>
+                      <tr style={{borderBottom:`2px solid ${T.border}`}}>
+                        <td style={{padding:"4px 8px",color:T.text,fontWeight:700,fontSize:12}}>Par</td>
+                        {pars.slice(off,off+9).map((p,i)=><td key={i} style={{textAlign:"center",fontWeight:700,color:T.text,fontSize:12,padding:"4px 2px"}}>{p}</td>)}
+                        <td style={{textAlign:"center",fontWeight:800,color:T.text,fontSize:12}}>{hPar}</td>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Score row — coloured blocks matching screenshot */}
+                      <tr style={{background:"#F8FAFA"}}>
+                        <td style={{padding:"6px 8px",color:T.text,fontWeight:700,fontSize:12}}>Score</td>
+                        {Array.from({length:9},(_,i)=>i+off).map(hi=>(
+                          <td key={hi} style={{textAlign:"center",padding:"4px 2px"}}>
+                            <ScoreBlock score={hs[hi]||0} par={pars[hi]} hcp={player.handicap} si={sis[hi]}/>
+                          </td>
+                        ))}
+                        <td style={{textAlign:"center",fontWeight:800,fontSize:14,color:T.teal}}>{hGross||"—"}</td>
+                      </tr>
+                      {/* Edit row — plain inputs */}
+                      <tr>
+                        <td style={{padding:"3px 8px",color:T.dim,fontSize:10}}>Edit</td>
+                        {Array.from({length:9},(_,i)=>i+off).map(hi=>(
+                          <td key={hi} style={{textAlign:"center",padding:"3px 2px"}}>
+                            <input type="number" min="0" max="15" value={hs[hi]||""} onChange={e=>updateScore(player.id,hi,e.target.value)}
+                              style={{width:28,textAlign:"center",background:"#fff",border:`1px solid ${T.border}`,borderRadius:5,fontSize:11,padding:"2px 0",color:T.text}}/>
+                          </td>
+                        ))}
+                        <td style={{textAlign:"center",fontSize:11,color:T.dim}}>{hPts} pts</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Totals — matches screenshot: Gross Strokes / Net Score / Stableford */}
+          <div style={{margin:"0 16px 90px"}}>
+            <div style={{background:T.white,borderRadius:14,border:`1px solid ${T.border}`,boxShadow:"0 1px 4px rgba(0,0,0,0.05)",overflow:"hidden"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",textAlign:"center"}}>
+                <div style={{padding:"14px 8px",borderRight:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:28,fontWeight:700,color:T.blue}}>{gross||"—"}</div>
+                  <div style={{fontSize:10,color:T.sub,marginTop:2}}>{gross?`+${gross-totalPar} gross`:"Gross Strokes"}</div>
+                </div>
+                <div style={{padding:"14px 8px",borderRight:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:28,fontWeight:700,color:T.text}}>
+                    {gross ? gross - Math.round(player.handicap * 18/18) : "—"}
+                  </div>
+                  <div style={{fontSize:10,color:T.sub,marginTop:2}}>
+                    {gross ? `${gross - Math.round(player.handicap) < totalPar ? "" : "+"}${gross - Math.round(player.handicap) - totalPar} net` : "Net Score"}
+                  </div>
+                </div>
+                <div style={{padding:"14px 8px"}}>
+                  <div style={{fontSize:28,fontWeight:700,color:T.teal}}>{totalPts}</div>
+                  <div style={{fontSize:10,color:T.sub,marginTop:2}}>Stableford</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── INLINE SCORECARD VIEW — all players expanded, like photo 2 ──────────────
+  return (
+    <div style={{flex:1,overflowY:"auto",background:T.bg,paddingBottom:80}}>
+      {allMatches.length===0&&(
+        <div style={{padding:32,textAlign:"center",color:T.sub,fontSize:13}}>No matches set up yet.</div>
+      )}
+
+      <div style={{padding:"0 12px"}}>
+      {allMatches.map(m=>{
+        const allPids   = m.teams.flatMap(t=>t.players);
+        const mPlayers  = allPids.map(pid=>{
+          const pl        = game.players.find(p=>p.id===pid);
+          const teamColor = m.teams.find(t=>t.players.includes(pid))?.color;
+          return pl ? {...pl, teamColor} : null;
+        }).filter(Boolean);
+
+        return (
+          <div key={m.id} style={{margin:"12px 16px 0"}}>
+            {/* Match name header — shows day label for multi-day games */}
+            <div style={{background:T.teal,borderRadius:"12px 12px 0 0",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#fff"}}>{m.name}</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,0.75)"}}>
+                {game.days>1?`Day ${parseInt(String(m.day),10)} · `:""}Stableford
+              </div>
+            </div>
+
+            {/* One inline scorecard per player */}
+            {mPlayers.map((pl, pi) => {
+              const hs       = getScores(game, pl.id, day);
+              const totalPts = totalSF(hs, pl.handicap, pars, sis);
+              const gross    = hs.reduce((a,b)=>a+b,0);
+              const totalPar = pars.reduce((a,b)=>a+b,0);
+              const netScore = gross ? gross - pl.handicap : 0;
+
+              return (
+                <div key={pl.id} style={{background:T.white,borderTop:pi>0?`2px solid ${T.bg}`:"none",paddingBottom:4}}>
+                  {/* Player name row */}
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px 6px"}}>
+                    <Av name={pl.name} team={pl.teamColor||pl.team} size={36}/>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:15,color:T.text}}>{pl.name}</div>
+                      <div style={{fontSize:11,color:T.sub}}>Hcp {pl.handicap}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:26,fontWeight:700,color:T.teal,lineHeight:1}}>{totalPts}</div>
+                      <div style={{fontSize:10,color:T.sub}}>Stableford</div>
+                    </div>
+                  </div>
+
+                  {/* Front and back nine tables */}
+                  {[0,9].map(off=>{
+                    const outLabel = off===0?"Out":"In";
+                    const hGross   = hs.slice(off,off+9).reduce((a,b)=>a+b,0);
+                    const hPar     = pars.slice(off,off+9).reduce((a,b)=>a+b,0);
+
+                    return (
+                      <div key={off} style={{overflowX:"auto",borderTop:`1px solid ${T.border}`}}>
+                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:280}}>
+                          <thead>
+                            {/* Teal hole header */}
+                            <tr style={{background:T.teal}}>
+                              <td style={{padding:"5px 6px",color:"#fff",fontWeight:700,fontSize:11,whiteSpace:"nowrap"}}>Hole</td>
+                              {Array.from({length:9},(_,i)=>i+off+1).map(h=>{
+                                const hc = compsOn(h-1,day);
+                                return (
+                                  <td key={h} style={{textAlign:"center",padding:"5px 2px",fontWeight:700,color:"#fff",fontSize:12,position:"relative"}}>
+                                    <span style={{position:"relative"}}>
+                                      {h}
+                                      {hc.length>0&&<span style={{position:"absolute",top:-4,right:-5,fontSize:7}}>{hc[0].type==="ntp"?"📍":"💥"}</span>}
+                                    </span>
+                                  </td>
+                                );
+                              })}
+                              <td style={{textAlign:"center",padding:"5px 5px",fontWeight:800,color:"#fff",fontSize:11}}>{outLabel}</td>
+                            </tr>
+                            {/* Hcp row */}
+                            <tr style={{background:"#FAFAFA"}}>
+                              <td style={{padding:"3px 6px",color:T.sub,fontSize:10}}>Hcp</td>
+                              {sis.slice(off,off+9).map((s,i)=><td key={i} style={{textAlign:"center",color:T.sub,fontSize:10,padding:"3px 2px"}}>{s}</td>)}
+                              <td/>
+                            </tr>
+                            {/* Par row */}
+                            <tr style={{borderBottom:`2px solid ${T.border}`}}>
+                              <td style={{padding:"3px 6px",color:T.text,fontWeight:700,fontSize:12}}>Par</td>
+                              {pars.slice(off,off+9).map((p,i)=><td key={i} style={{textAlign:"center",fontWeight:700,color:T.text,fontSize:12,padding:"3px 2px"}}>{p}</td>)}
+                              <td style={{textAlign:"center",fontWeight:800,color:T.text,fontSize:12}}>{hPar}</td>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Score blocks — coloured like screenshot */}
+                            <tr>
+                              <td style={{padding:"5px 6px",color:T.text,fontWeight:700,fontSize:12}}>Score</td>
+                              {Array.from({length:9},(_,i)=>i+off).map(hi=>(
+                                <td key={hi} style={{textAlign:"center",padding:"4px 2px"}}>
+                                  <ScoreBlock score={hs[hi]||0} par={pars[hi]} hcp={pl.handicap} si={sis[hi]}/>
+                                </td>
+                              ))}
+                              <td style={{textAlign:"center",fontWeight:800,fontSize:13,color:T.teal}}>{hGross||"—"}</td>
+                            </tr>
+                            {/* Editable input row */}
+                            <tr style={{background:"#FAFAFA"}}>
+                              <td style={{padding:"3px 6px",color:T.dim,fontSize:10}}>Edit</td>
+                              {Array.from({length:9},(_,i)=>i+off).map(hi=>(
+                                <td key={hi} style={{textAlign:"center",padding:"3px 2px"}}>
+                                  <input type="number" min="0" max="15"
+                                    value={hs[hi]||""}
+                                    onChange={e=>updateScore(pl.id,hi,e.target.value)}
+                                    style={{width:28,textAlign:"center",background:"#fff",border:`1px solid ${T.border}`,borderRadius:5,fontSize:11,padding:"2px 0",color:T.text}}/>
+                                </td>
+                              ))}
+                              <td style={{textAlign:"center",fontSize:10,color:T.dim}}>
+                                {hs.slice(off,off+9).reduce((s,sc,i)=>sc>0?s+sf(sc,pars[off+i],pl.handicap,sis[off+i]):s,0)} pts
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
+
+                  {/* Totals row — Gross / Net / Stableford */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",borderTop:`1px solid ${T.border}`,textAlign:"center"}}>
+                    <div style={{padding:"10px 8px",borderRight:`1px solid ${T.border}`}}>
+                      <div style={{fontSize:22,fontWeight:700,color:T.blue}}>{gross||"—"}</div>
+                      <div style={{fontSize:10,color:T.sub}}>Gross Strokes</div>
+                    </div>
+                    <div style={{padding:"10px 8px",borderRight:`1px solid ${T.border}`}}>
+                      <div style={{fontSize:22,fontWeight:700,color:T.text}}>{gross?gross-pl.handicap:"—"}</div>
+                      <div style={{fontSize:10,color:T.sub}}>Net Score</div>
+                    </div>
+                    <div style={{padding:"10px 8px"}}>
+                      <div style={{fontSize:22,fontWeight:700,color:T.teal}}>{totalPts}</div>
+                      <div style={{fontSize:10,color:T.sub}}>Stableford</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={{height:4,background:T.teal,borderRadius:"0 0 12px 12px",marginBottom:16}}/>
+          </div>
+        );
+      })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEADERBOARD TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function LeaderboardTab({game, setGame}) {
+  const [view, setView] = useState("individual");
+  const [day,  setDay]  = useState(1);
+  const [bForm,setBF]   = useState({type:"ntp",hole:1,pid:"",desc:""});
+
+  if(!game) {
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:T.bg,gap:12,padding:24,textAlign:"center"}}>
+        <div style={{fontSize:48}}>🏆</div>
+        <div style={{fontWeight:700,fontSize:18,color:T.text}}>No active game</div>
+        <div style={{fontSize:13,color:T.sub}}>Set up a game in Match Setup first</div>
+      </div>
+    );
+  }
+
+  const pars = game.course?.pars || DP;
+  const sis  = game.course?.sis  || DS;
+
+  function addBonus() {
+    if(!bForm.pid) return;
+    const pl = game.players.find(p=>p.id===bForm.pid);
+    setGame(g=>({...g,bonuses:[...(g.bonuses||[]),{id:uid(),...bForm,playerName:pl?.name}]}));
+    setBF({type:"ntp",hole:1,pid:"",desc:""});
+  }
+  function removeBonus(id) {
+    setGame(g=>({...g,bonuses:(g.bonuses||[]).filter(b=>b.id!==id)}));
+  }
+
+  const ranked = game.players
+    .map(p=>{
+      const sc = getScores(game,p.id,day);
+      return {...p, pts:totalSF(sc,p.handicap,pars,sis), played:sc.filter(s=>s>0).length, sc};
+    })
+    .sort((a,b)=>b.pts-a.pts)
+    .map((p,i)=>({...p,rank:i+1}));
+
+  const teamMap = {};
+  game.players.forEach(p=>{
+    if(!teamMap[p.team]) teamMap[p.team]={team:p.team,pts:0};
+    for(let d=1; d<=game.days; d++) {
+      teamMap[p.team].pts += totalSF(getScores(game,p.id,d), p.handicap, pars, sis);
+    }
+  });
+  const teamRanked = Object.values(teamMap).sort((a,b)=>b.pts-a.pts);
+
+  const visibleMatches = game.days<=1
+    ? (game.matches||[])
+    : (game.matches||[]).filter(m=>parseInt(String(m.day),10)===day);
+
+  function matchResult(m) {
+    const teams = m.teams.map(t=>({
+      ...t,
+      sfTotal: t.players.reduce((s,pid)=>{
+        const pl=game.players.find(p=>p.id===pid);
+        return s+totalSF(getScores(game,pid,day),pl?.handicap||0,pars,sis);
+      },0)
+    }));
+    const wins = teams.map(()=>0);
+    let halved = 0;
+    for(let h=0;h<18;h++){
+      const bests = teams.map(t=>Math.max(0,...t.players.map(pid=>{
+        const pl=game.players.find(p=>p.id===pid);
+        const sc=getScores(game,pid,day)[h]||0;
+        return sc>0 ? sf(sc,pars[h],pl?.handicap||0,sis[h]) : 0;
+      })));
+      const mx=Math.max(...bests);
+      if(mx===0){halved++;continue;}
+      const ws=bests.map((v,i)=>v===mx?i:-1).filter(i=>i>=0);
+      if(ws.length===1) wins[ws[0]]++;
+      else halved++;
+    }
+    return {teams,wins,halved};
+  }
+
+  return (
+    <div style={{flex:1,overflowY:"auto",background:T.bg,paddingBottom:80}}>
+      {/* Team banner */}
+      <div style={{display:"flex",margin:"12px 16px 10px",borderRadius:14,overflow:"hidden",boxShadow:"0 2px 12px rgba(0,0,0,0.1)"}}>
+        {teamRanked.map((t,i)=>(
+          <div key={t.team} style={{flex:1,background:tm(t.team).bg,padding:"14px 0",textAlign:"center",color:"#fff",borderRight:i<teamRanked.length-1?"2px solid rgba(255,255,255,0.2)":"none"}}>
+            <div style={{fontSize:10,fontWeight:600,opacity:0.8,letterSpacing:1}}>{TC[t.team]?.label.toUpperCase()} TEAM</div>
+            <div style={{fontSize:34,fontWeight:700}}>{t.pts}</div>
+            <div style={{fontSize:10,opacity:0.7}}>all days total</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Toggles */}
+      <div style={{display:"flex",gap:6,padding:"0 16px 10px",flexWrap:"wrap"}}>
+        {game.days>1&&Array.from({length:game.days},(_,i)=>(
+          <button key={i+1} onClick={()=>setDay(i+1)}
+            style={{padding:"6px 12px",border:`1px solid ${day===i+1?T.teal:T.border}`,borderRadius:10,background:day===i+1?T.teal:T.white,color:day===i+1?"#fff":T.sub,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+            Day {i+1}
+          </button>
+        ))}
+        <div style={{flex:1}}/>
+        {[{id:"individual",l:"Individual"},{id:"matches",l:"Matches"},{id:"bonuses",l:"NTP / LD"}].map(v=>(
+          <button key={v.id} onClick={()=>setView(v.id)}
+            style={{padding:"6px 12px",border:`1px solid ${view===v.id?T.teal:T.border}`,borderRadius:10,background:view===v.id?T.teal:T.white,color:view===v.id?"#fff":T.sub,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+            {v.l}
+          </button>
+        ))}
+      </div>
+
+      {/* INDIVIDUAL */}
+      {view==="individual"&&(
+        <div style={{background:T.white,borderRadius:14,margin:"0 16px",border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 1px 4px rgba(0,0,0,0.05)"}}>
+          {/* Header row — dark, matching screenshot */}
+          <div style={{display:"grid",gridTemplateColumns:"44px 1fr 60px 60px 44px",padding:"10px 16px",background:"#424242",color:"#ccc",fontSize:12,fontWeight:600,letterSpacing:0.5}}>
+            <span style={{textAlign:"center"}}>#</span>
+            <span>Player</span>
+            <span style={{textAlign:"center"}}>Score</span>
+            <span style={{textAlign:"center"}}>+/-</span>
+            <span style={{textAlign:"center"}}>🚩</span>
+          </div>
+          {ranked.map((p,i)=>{
+            const gross=p.sc.reduce((a,b)=>a+b,0);
+            const diff=gross-pars.slice(0,p.played).reduce((a,b)=>a+b,0);
+            return (
+              <div key={p.id} style={{display:"grid",gridTemplateColumns:"44px 1fr 60px 60px 44px",alignItems:"center",padding:"14px 16px",borderTop:`1px solid ${T.border}`}}>
+                <span style={{fontWeight:700,color:T.sub,fontSize:16,textAlign:"center"}}>{p.rank}.</span>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  {/* Teal avatar like screenshot */}
+                  <div style={{width:40,height:40,borderRadius:"50%",background:T.teal,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:14,flexShrink:0}}>
+                    {p.name.split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:15,color:T.text}}>{p.name}</div>
+                  </div>
+                </div>
+                <span style={{fontWeight:800,fontSize:22,color:T.text,textAlign:"center"}}>{p.pts}</span>
+                <span style={{fontWeight:700,fontSize:15,textAlign:"center",color:diff>0?T.red:diff<0?T.green:T.sub}}>
+                  {p.played>0?(diff>=0?`+${diff}`:diff):"—"}
+                </span>
+                <span style={{textAlign:"center",color:T.sub,fontSize:14}}>{p.played}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* MATCHES */}
+      {view==="matches"&&(
+        <div style={{padding:"0 16px"}}>
+          {visibleMatches.length===0&&<div style={{padding:24,textAlign:"center",color:T.sub,fontSize:13}}>No matches for this selection.</div>}
+          {visibleMatches.map(m=>{
+            const {teams,wins,halved}=matchResult(m);
+            const mx=Math.max(...wins);
+            return (
+              <Crd key={m.id} style={{marginBottom:12,padding:0,overflow:"hidden"}}>
+                <div style={{background:T.tealDark,padding:"9px 14px",fontWeight:700,fontSize:13,color:"#fff"}}>{m.name.toUpperCase()}</div>
+                {teams.map((t,ti)=>{
+                  const leading=wins[ti]===mx&&mx>0;
+                  return (
+                    <div key={t.id} style={{padding:"12px 14px",borderTop:ti>0?`1px solid ${T.border}`:"none",background:leading?tm(t.color).bg+"12":"transparent"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{width:10,height:10,borderRadius:"50%",background:tm(t.color).bg}}/>
+                          <div>{t.players.map(pid=>{const pl=game.players.find(p=>p.id===pid);return pl?<div key={pid} style={{fontWeight:700,fontSize:14,color:T.text}}>{pl.name}</div>:null;})}</div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:22,fontWeight:700,color:leading?T.teal:T.sub}}>{wins[ti]} holes</div>
+                          <div style={{fontSize:11,color:T.sub}}>{t.sfTotal} pts</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{padding:"6px 14px 8px",borderTop:`1px solid ${T.border}`,fontSize:11,color:T.dim}}>{halved} holes halved</div>
+              </Crd>
+            );
+          })}
+        </div>
+      )}
+
+      {/* NTP / LD */}
+      {view==="bonuses"&&(
+        <div style={{padding:"0 16px"}}>
+          <Crd style={{marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:15,color:T.text,marginBottom:12}}>Record a Bonus</div>
+            <Fld>Type</Fld>
+            <select value={bForm.type} onChange={e=>setBF(f=>({...f,type:e.target.value}))}
+              style={{width:"100%",padding:"11px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}>
+              <option value="ntp">📍 Nearest the Pin</option>
+              <option value="ld">💥 Longest Drive</option>
+              <option value="other">🏆 Other Award</option>
+            </select>
+            {bForm.type==="ntp"&&(
+              <div>
+                <Fld>Hole</Fld>
+                <select value={bForm.hole} onChange={e=>setBF(f=>({...f,hole:parseInt(e.target.value,10)}))}
+                  style={{width:"100%",padding:"11px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}>
+                  {Array.from({length:18},(_,i)=><option key={i+1} value={i+1}>Hole {i+1}</option>)}
+                </select>
+              </div>
+            )}
+            <Fld>Winner</Fld>
+            <select value={bForm.pid} onChange={e=>setBF(f=>({...f,pid:e.target.value}))}
+              style={{width:"100%",padding:"11px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}>
+              <option value="">Select player…</option>
+              {game.players.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <Fld>Notes (optional)</Fld>
+            <input value={bForm.desc} onChange={e=>setBF(f=>({...f,desc:e.target.value}))} placeholder="e.g. 3 feet on the 7th"
+              style={{width:"100%",padding:"11px 12px",background:"#F8FAFA",border:`1px solid ${T.border}`,borderRadius:10,fontSize:14,color:T.text,boxSizing:"border-box"}}/>
+            <div style={{marginTop:12}}><Btn label="✓ Save Bonus" onClick={addBonus} full disabled={!bForm.pid}/></div>
+          </Crd>
+          {(game.bonuses||[]).length===0&&<div style={{padding:"20px 0",textAlign:"center",color:T.sub,fontSize:13}}>No bonuses recorded yet.</div>}
+          {(game.bonuses||[]).map(b=>(
+            <Crd key={b.id} style={{marginBottom:10,display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{fontSize:26}}>{b.type==="ntp"?"📍":b.type==="ld"?"💥":"🏆"}</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13,color:T.text}}>{b.type==="ntp"?`Nearest Pin — Hole ${b.hole}`:b.type==="ld"?"Longest Drive":"Bonus"}</div>
+                <div style={{fontSize:15,color:T.teal,fontWeight:700,marginTop:2}}>{b.playerName}</div>
+                {b.desc&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{b.desc}</div>}
+              </div>
+              <button onClick={()=>removeBonus(b.id)} style={{background:"none",border:"none",color:T.dim,cursor:"pointer",fontSize:20,lineHeight:1}}>×</button>
+            </Crd>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HISTORY TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function HistoryTab({history, onReopen}) {
+  if(history.length===0) {
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:T.bg,gap:12,padding:24,textAlign:"center"}}>
+        <div style={{fontSize:48}}>📋</div>
+        <div style={{fontWeight:700,fontSize:18,color:T.text}}>No past games yet</div>
+        <div style={{fontSize:13,color:T.sub,lineHeight:1.6}}>Your completed games will appear here.<br/>Create your first game in Match Setup.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{flex:1,overflowY:"auto",background:T.bg,paddingBottom:80}}>
+      <div style={{padding:"12px 16px 0"}}>
+        <div style={{fontSize:11,fontWeight:600,color:T.sub,letterSpacing:0.5,marginBottom:10}}>PAST GAMES ({history.length})</div>
+        {[...history].reverse().map(g=>{
+          const pars=g.course?.pars||DP, sis=g.course?.sis||DS;
+          const top = g.players.map(p=>({...p,pts:totalSF(getScores(g,p.id,1),p.handicap,pars,sis)})).sort((a,b)=>b.pts-a.pts)[0];
+          const tm2 = {};
+          g.players.forEach(p=>{
+            if(!tm2[p.team])tm2[p.team]=0;
+            for(let d=1;d<=g.days;d++) tm2[p.team]+=totalSF(getScores(g,p.id,d),p.handicap,pars,sis);
+          });
+          const winner = Object.entries(tm2).sort((a,b)=>b[1]-a[1])[0];
+          return (
+            <Crd key={g.id} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:16,color:T.text}}>{g.name}</div>
+                  <div style={{fontSize:12,color:T.sub,marginTop:2}}>{g.course?.name} · {g.date}</div>
+                  <div style={{fontSize:12,color:T.sub}}>{g.players.length} players · {g.matches.length} matches · {g.days} day{g.days>1?"s":""}</div>
+                  {winner&&<div style={{marginTop:6,fontSize:12,color:T.teal,fontWeight:600}}>🏆 {TC[winner[0]]?.label} Team — {winner[1]} pts</div>}
+                  {top&&<div style={{fontSize:12,color:T.sub}}>Best: {top.name} ({top.pts} pts)</div>}
+                  {(g.bonuses||[]).length>0&&(
+                    <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+                      {g.bonuses.map(b=>(<span key={b.id} style={{fontSize:11,background:T.tealPale,color:T.tealDark,borderRadius:20,padding:"2px 8px",fontWeight:600}}>{b.type==="ntp"?"📍":"💥"} {b.playerName}</span>))}
+                    </div>
+                  )}
+                </div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,marginLeft:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:T.teal,letterSpacing:2}}>{g.code}</div>
+                  <Btn label="View" onClick={()=>onReopen(g)} sm outline/>
+                </div>
+              </div>
+            </Crd>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOT APP
+// ═══════════════════════════════════════════════════════════════════════════════
+function App() {
+  const [tab,     setTab]     = useState("courses");
+  const [course,  setCourse]  = useState(null);
+  const [game,    setGame]    = useState(null);
+  const [history, setHistory] = useState([]);
+
+  function handleSetGame(g) {
+    if(g===null && game) {
+      setHistory(h=>{
+        const exists = h.find(x=>x.id===game.id);
+        return exists ? h.map(x=>x.id===game.id?game:x) : [...h,game];
+      });
+    }
+    setGame(g);
+  }
+
+  function reopenGame(g) { setGame(g); setTab("board"); }
+
+  // Keep history in sync with live score changes
+  useEffect(()=>{
+    if(!game) return;
+    setHistory(h=>{
+      const exists = h.find(x=>x.id===game.id);
+      return exists ? h.map(x=>x.id===game.id?game:x) : h;
+    });
+  },[game]);
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100dvh",fontFamily:"'DM Sans',sans-serif",background:T.dark,overflow:"hidden"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+        *{box-sizing:border-box;}button:focus{outline:none;}
+        input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;}
+        input,select{outline:none;}
+        ::-webkit-scrollbar{width:3px;height:3px;}
+        ::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px;}
+        @keyframes spin{to{transform:rotate(360deg);}}
+        .leaflet-container{font-family:'DM Sans',sans-serif!important;}
+      `}</style>
+
+      {/* Top bar — dark with Wackers logo */}
+      <div style={{background:T.dark,padding:"8px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,minHeight:52}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          {/* Logo + Name */}
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src="/logo.jpg" alt="Wackers"
+              style={{height:48,width:"auto"}}
+              onError={e=>{e.target.parentElement.innerHTML='<span style="font-size:28px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial Black,sans-serif">W</span>';}}/>
+            <span style={{fontWeight:900,fontSize:22,color:"#fff",letterSpacing:1.5,fontFamily:"Arial Black,sans-serif"}}>WACKERS</span>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {course&&<div style={{fontSize:10,color:"rgba(255,255,255,0.5)",fontWeight:500,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{course.name}</div>}
+          {game&&<div style={{background:"rgba(255,255,255,0.12)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:7,padding:"3px 9px",fontSize:13,fontWeight:700,color:"#fff",letterSpacing:2,flexShrink:0}}>{game.code}</div>}
+        </div>
+      </div>
+
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {tab==="courses" && <CoursesTab course={course} setCourse={setCourse} setTab={setTab}/>}
+        {tab==="setup"   && <SetupTab    game={game} setGame={handleSetGame} course={course} setTab={setTab}/>}
+        {tab==="cards"   && <ScorecardTab game={game} setGame={setGame}/>}
+        {tab==="board"   && <LeaderboardTab game={game} setGame={setGame}/>}
+        {tab==="history" && <HistoryTab  history={history} onReopen={reopenGame}/>}
+      </div>
+
+      <Nav tab={tab} setTab={setTab}/>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    </script>
+  </body>
+</html>
